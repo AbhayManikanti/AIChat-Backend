@@ -1,0 +1,8 @@
+fastapi
+pydantic
+python-dotenv
+uvicorn
+langchain-google-genai
+langchain-core
+langchain
+chromadb
