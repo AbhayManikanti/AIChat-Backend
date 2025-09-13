@@ -377,6 +377,12 @@ def create_smart_system_prompt(user_question: str) -> str:
 
 {CURRENT_TRAINING_PROMPT}
 
+IMPORTANT FORMATTING RULES:
+- When including links/URLs, format them as clickable HTML links: <a href="URL" target="_blank">Link Text</a>
+- Do NOT use Markdown format [text](url) - use HTML format instead
+- Always include target="_blank" to open links in new tabs
+- Example: <a href="https://github.com/AbhayManikanti" target="_blank">GitHub Profile</a>
+
 You have access to tools for calculations and resume information, but be smart about when to use them:
 
 """
@@ -486,6 +492,21 @@ def is_rate_limit_error(error) -> bool:
     ]
     return any(indicator in error_str for indicator in rate_limit_indicators)
 
+def convert_markdown_links_to_html(text: str) -> str:
+    """Convert Markdown links [text](url) to HTML links <a href="url" target="_blank">text</a>"""
+    import re
+    
+    # Pattern to match [text](url) format
+    markdown_link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
+    
+    def replace_link(match):
+        link_text = match.group(1)
+        url = match.group(2)
+        return f'<a href="{url}" target="_blank">{link_text}</a>'
+    
+    # Replace all markdown links with HTML links
+    return re.sub(markdown_link_pattern, replace_link, text)
+
 def switch_to_fallback_llm():
     """Switch to Perplexity LLM when Gemini hits rate limits"""
     global llm, agent_executor, current_llm_provider, _llm_initialized, _agent_initialized
@@ -590,7 +611,7 @@ Thought: {agent_scratchpad}
             verbose=True,
             handle_parsing_errors=True,
             max_iterations=3,  # Reduced from 5 to save API calls
-            early_stopping_method="generate"  # Stop early when possible
+            early_stopping_method="force"  # Stop early when possible
         )
         
         logger.info("AI Agent initialized successfully with optimizations")
@@ -795,7 +816,10 @@ async def ask_question(request: QuestionRequest):
             )
         
         # Extract answer
-        answer = result.get("output", "I couldn't process your question. Please try again.")
+        raw_answer = result.get("output", "I couldn't process your question. Please try again.")
+        
+        # Convert Markdown links to HTML for better frontend compatibility
+        answer = convert_markdown_links_to_html(raw_answer)
         
         # Check if resume search was actually used
         used_resume = False
@@ -991,6 +1015,22 @@ async def test_resume_detection(request: dict):
         "estimated_api_calls": "1-3 calls (always uses agent)",
         "llm_provider": current_llm_provider,
         "fallback_available": fallback_llm is not None
+    }
+
+@app.post("/test-link-conversion")
+async def test_link_conversion(request: dict):
+    """Test Markdown to HTML link conversion for frontend debugging"""
+    text = request.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    
+    converted_text = convert_markdown_links_to_html(text)
+    
+    return {
+        "original_text": text,
+        "converted_text": converted_text,
+        "conversion_applied": text != converted_text,
+        "note": "Use converted_text in your frontend. It contains HTML links with target='_blank'"
     }
 
 # === NEW OPTIMIZATION ENDPOINTS ===
