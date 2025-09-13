@@ -19,7 +19,7 @@ EDUCATION:
 
 PROJECTS:
 
-1. Fraud Detection System: Real-time AI/ML fraud detection platform
+1. Aegis AI: Real-time AI/ML fraud detection platform
 	- Engineered an AI/ML backend in Python (FastAPI, XGBoost) achieving 99.93% fraud detection accuracy, deployed securely with Docker on Google Cloud Run
 	- Developed a modern frontend (Next.js 15, TypeScript, Tailwind CSS) with responsive banking-grade UI/UX, dark/light modes, and smooth animations
 	- Implemented real-time WebSocket transaction streaming and manual testing workflows, replicating live credit card fraud detection in financial systems
