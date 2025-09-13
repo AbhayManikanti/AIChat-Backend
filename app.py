@@ -27,8 +27,7 @@ from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.agents import AgentExecutor, create_react_agent
@@ -314,146 +313,14 @@ class TextOnlyVectorStore:
         
         return results
 
-def initialize_embeddings_with_fallback():
-    """Initialize embeddings with automatic fallback from Google to Perplexity/OpenAI"""
-    try:
-        # Try Google embeddings first
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY not found - trying fallback")
-        
-        logger.info("Initializing Google embeddings...")
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
-        
-        # Test Google embeddings with a simple embedding
-        logger.info("Testing Google embeddings...")
-        embeddings.embed_query("test")
-        logger.info("Google embeddings initialized successfully")
-        return embeddings, "google"
-        
-    except Exception as google_error:
-        logger.warning(f"Google embeddings failed: {str(google_error)}")
-        
-        # Check if it's a rate limit error
-        if is_rate_limit_error(google_error):
-            logger.warning("Google embeddings rate limited - switching to Perplexity fallback")
-        
-        # Try Perplexity/OpenAI embeddings as fallback
-        try:
-            perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
-            if not perplexity_api_key:
-                raise ValueError("PERPLEXITY_API_KEY not found for fallback embeddings")
-            
-            logger.info("Initializing Perplexity-compatible OpenAI embeddings as fallback...")
-            fallback_embeddings = OpenAIEmbeddings(
-                api_key=perplexity_api_key,
-                base_url="https://api.perplexity.ai",
-                model="text-embedding-3-small"  # Use a standard OpenAI embedding model
-            )
-            
-            # Test fallback embeddings
-            logger.info("Testing fallback embeddings...")
-            fallback_embeddings.embed_query("test")
-            logger.info("Perplexity fallback embeddings initialized successfully")
-            return fallback_embeddings, "perplexity"
-            
-        except Exception as fallback_error:
-            logger.error(f"Fallback embeddings also failed: {str(fallback_error)}")
-            
-            # If Perplexity doesn't support embeddings, try regular OpenAI
-            try:
-                openai_api_key = os.getenv("OPENAI_API_KEY") 
-                if not openai_api_key:
-                    raise ValueError("No fallback embedding options available")
-                
-                logger.info("Trying standard OpenAI embeddings as last fallback...")
-                openai_embeddings = OpenAIEmbeddings(
-                    api_key=openai_api_key,
-                    model="text-embedding-3-small"
-                )
-                
-                # Test OpenAI embeddings
-                logger.info("Testing OpenAI embeddings...")
-                openai_embeddings.embed_query("test")
-                logger.info("OpenAI embeddings initialized successfully")
-                return openai_embeddings, "openai"
-                
-            except Exception as openai_error:
-                logger.error(f"OpenAI embeddings also failed: {str(openai_error)}")
-                
-                # Final fallback: return None to indicate no embeddings available
-                logger.warning("All embedding providers failed - will use text-based search fallback")
-                return None, "none"
+# Removed complex embedding fallback - not needed for chatbot functionality
 
-def initialize_vectorstore(resume_content: str) -> Chroma:
-    """Initialize ChromaDB vectorstore with persistent storage and resume content - WITH EMBEDDING FALLBACK"""
+def initialize_vectorstore(resume_content: str):
+    """Initialize simple text-based vectorstore - NO EMBEDDINGS NEEDED FOR CHATBOT"""
     try:
-        # Check SQLite3 compatibility first
-        if not check_sqlite_compatibility():
-            logger.warning("Continuing despite SQLite3 version warnings...")
-        
-        # Initialize embeddings with automatic fallback
-        embeddings, provider = initialize_embeddings_with_fallback()
-        
-        if embeddings is None:
-            logger.warning("No embedding providers available - creating text-only fallback vectorstore")
-            # Return a simple text-based storage object instead of Chroma
-            return TextOnlyVectorStore(resume_content)
-        
-        logger.info(f"Using {provider} embeddings for vectorstore")
-        
-        # Check if vectorstore already exists
-        if os.path.exists(VECTORSTORE_DIR) and os.listdir(VECTORSTORE_DIR):
-            try:
-                logger.info("Loading existing vectorstore from persistent storage...")
-                vectorstore = Chroma(
-                    persist_directory=VECTORSTORE_DIR,
-                    embedding_function=embeddings,
-                    collection_name="resume_collection"
-                )
-                
-                # Verify it has documents
-                if vectorstore._collection.count() > 0:
-                    logger.info(f"Loaded existing vectorstore with {vectorstore._collection.count()} documents")
-                    return vectorstore
-                else:
-                    logger.info("Existing vectorstore is empty, creating new one...")
-            except Exception as e:
-                logger.warning(f"Failed to load existing vectorstore: {str(e)}, creating new one...")
-        
-        # Create new vectorstore
-        logger.info("Creating new vectorstore with persistent storage...")
-        
-        # Split the resume into chunks
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
-            separators=["\n\n", "\n", ".", ",", " "],
-            length_function=len
-        )
-        
-        # Create documents from resume content
-        chunks = text_splitter.split_text(resume_content)
-        documents = [
-            Document(
-                page_content=chunk,
-                metadata={"source": "resume", "chunk_id": i}
-            ) 
-            for i, chunk in enumerate(chunks)
-        ]
-        
-        # Create and populate vectorstore with persistence
-        vectorstore = Chroma.from_documents(
-            documents=documents,
-            embedding=embeddings,
-            collection_name="resume_collection",
-            persist_directory=VECTORSTORE_DIR  # Enable persistence
-        )
-        
-        logger.info(f"Vectorstore created and persisted with {len(documents)} document chunks")
-        return vectorstore
+        logger.info("Initializing text-only vectorstore (no embeddings required for chatbot)")
+        # Always use TextOnlyVectorStore - much simpler and faster
+        return TextOnlyVectorStore(resume_content)
         
     except Exception as e:
         logger.error(f"Failed to initialize vectorstore: {str(e)}")
