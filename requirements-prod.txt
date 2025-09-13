@@ -1,0 +1,45 @@
+# Production requirements for token-optimized AI backend
+# Pinned versions for production stability
+
+# Core FastAPI framework
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+starlette==0.47.3
+
+# Environment and configuration  
+python-dotenv==1.1.1
+pydantic==2.11.7
+pydantic-settings==2.10.1
+
+# LangChain ecosystem - token optimized AI backend
+langchain==0.3.27
+langchain-core==0.3.76
+langchain-community==0.3.29
+langchain-text-splitters==0.3.11
+
+# LLM providers - Primary (Gemini) and Fallback (Perplexity)
+langchain-google-genai==2.1.10
+langchain-openai==0.3.33
+
+# Vector database for persistent resume storage
+chromadb==1.0.20
+
+# HTTP client and utilities
+httpx==0.28.1
+tenacity==9.1.2
+tiktoken==0.11.0
+
+# Google API dependencies
+google-ai-generativelanguage==0.6.18
+google-api-core==2.25.1
+google-auth==2.40.3
+
+# OpenAI client (for Perplexity)
+openai==1.107.2
+
+# Core dependencies
+aiohttp==3.12.15
+requests==2.32.5
+numpy==2.0.2
+PyYAML==6.0.2
+typing-extensions==4.15.0
