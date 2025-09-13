@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.agents import AgentExecutor, create_react_agent
@@ -248,22 +248,161 @@ def update_training_prompt(new_training_prompt: str):
 
 # === OPTIMIZATION 3: Persistent Vector Storage ===
 
+class TextOnlyVectorStore:
+    """Fallback text-based search when no embedding providers are available"""
+    
+    def __init__(self, content: str):
+        """Initialize with resume content for text-based search"""
+        self.content = content.lower()  # Store in lowercase for case-insensitive search
+        self.original_content = content
+        
+        # Split content into chunks for better search results
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50,
+            separators=["\n\n", "\n", ".", ",", " "],
+            length_function=len
+        )
+        self.chunks = text_splitter.split_text(content)
+        logger.info(f"TextOnlyVectorStore initialized with {len(self.chunks)} text chunks")
+    
+    def similarity_search(self, query: str, k: int = 3):
+        """Text-based similarity search using keyword matching and scoring"""
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        
+        # Score each chunk based on keyword matches
+        scored_chunks = []
+        for i, chunk in enumerate(self.chunks):
+            chunk_lower = chunk.lower()
+            chunk_words = set(chunk_lower.split())
+            
+            # Calculate score based on:
+            # 1. Direct substring match
+            # 2. Number of matching words
+            # 3. Percentage of query words found
+            
+            score = 0
+            if query_lower in chunk_lower:
+                score += 10  # High score for exact substring match
+            
+            matching_words = query_words.intersection(chunk_words)
+            score += len(matching_words) * 2  # Points for each matching word
+            
+            if query_words:
+                word_match_ratio = len(matching_words) / len(query_words)
+                score += word_match_ratio * 5  # Bonus for higher word match ratio
+            
+            if score > 0:
+                scored_chunks.append((score, chunk, i))
+        
+        # Sort by score (descending) and return top k results
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        
+        # Convert to Document-like objects for compatibility
+        class SimpleDocument:
+            def __init__(self, content):
+                self.page_content = content
+                self.metadata = {"source": "resume_text_search"}
+        
+        results = [SimpleDocument(chunk) for _, chunk, _ in scored_chunks[:k]]
+        
+        if not results:
+            # If no matches found, return first few chunks as fallback
+            logger.info("No keyword matches found, returning default chunks")
+            results = [SimpleDocument(chunk) for chunk in self.chunks[:k]]
+        
+        return results
+
+def initialize_embeddings_with_fallback():
+    """Initialize embeddings with automatic fallback from Google to Perplexity/OpenAI"""
+    try:
+        # Try Google embeddings first
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise ValueError("GOOGLE_API_KEY not found - trying fallback")
+        
+        logger.info("Initializing Google embeddings...")
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+        
+        # Test Google embeddings with a simple embedding
+        logger.info("Testing Google embeddings...")
+        embeddings.embed_query("test")
+        logger.info("Google embeddings initialized successfully")
+        return embeddings, "google"
+        
+    except Exception as google_error:
+        logger.warning(f"Google embeddings failed: {str(google_error)}")
+        
+        # Check if it's a rate limit error
+        if is_rate_limit_error(google_error):
+            logger.warning("Google embeddings rate limited - switching to Perplexity fallback")
+        
+        # Try Perplexity/OpenAI embeddings as fallback
+        try:
+            perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
+            if not perplexity_api_key:
+                raise ValueError("PERPLEXITY_API_KEY not found for fallback embeddings")
+            
+            logger.info("Initializing Perplexity-compatible OpenAI embeddings as fallback...")
+            fallback_embeddings = OpenAIEmbeddings(
+                api_key=perplexity_api_key,
+                base_url="https://api.perplexity.ai",
+                model="text-embedding-3-small"  # Use a standard OpenAI embedding model
+            )
+            
+            # Test fallback embeddings
+            logger.info("Testing fallback embeddings...")
+            fallback_embeddings.embed_query("test")
+            logger.info("Perplexity fallback embeddings initialized successfully")
+            return fallback_embeddings, "perplexity"
+            
+        except Exception as fallback_error:
+            logger.error(f"Fallback embeddings also failed: {str(fallback_error)}")
+            
+            # If Perplexity doesn't support embeddings, try regular OpenAI
+            try:
+                openai_api_key = os.getenv("OPENAI_API_KEY") 
+                if not openai_api_key:
+                    raise ValueError("No fallback embedding options available")
+                
+                logger.info("Trying standard OpenAI embeddings as last fallback...")
+                openai_embeddings = OpenAIEmbeddings(
+                    api_key=openai_api_key,
+                    model="text-embedding-3-small"
+                )
+                
+                # Test OpenAI embeddings
+                logger.info("Testing OpenAI embeddings...")
+                openai_embeddings.embed_query("test")
+                logger.info("OpenAI embeddings initialized successfully")
+                return openai_embeddings, "openai"
+                
+            except Exception as openai_error:
+                logger.error(f"OpenAI embeddings also failed: {str(openai_error)}")
+                
+                # Final fallback: return None to indicate no embeddings available
+                logger.warning("All embedding providers failed - will use text-based search fallback")
+                return None, "none"
+
 def initialize_vectorstore(resume_content: str) -> Chroma:
-    """Initialize ChromaDB vectorstore with persistent storage and resume content"""
+    """Initialize ChromaDB vectorstore with persistent storage and resume content - WITH EMBEDDING FALLBACK"""
     try:
         # Check SQLite3 compatibility first
         if not check_sqlite_compatibility():
             logger.warning("Continuing despite SQLite3 version warnings...")
         
-        # Check for GOOGLE API key
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+        # Initialize embeddings with automatic fallback
+        embeddings, provider = initialize_embeddings_with_fallback()
         
-        # Initialize embeddings
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
+        if embeddings is None:
+            logger.warning("No embedding providers available - creating text-only fallback vectorstore")
+            # Return a simple text-based storage object instead of Chroma
+            return TextOnlyVectorStore(resume_content)
+        
+        logger.info(f"Using {provider} embeddings for vectorstore")
         
         # Check if vectorstore already exists
         if os.path.exists(VECTORSTORE_DIR) and os.listdir(VECTORSTORE_DIR):
