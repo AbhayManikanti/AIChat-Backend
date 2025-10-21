@@ -13,23 +13,29 @@ PROFESSIONAL EXPERIENCE:
 - Designed and deployed chatbot solutions for enhanced customer interaction
 
 EDUCATION:
-- B.Tech in Information Science from BMSCE (Bangalore)
+- Bachelors in Computer Science from BMSCE (Bangalore)
 - GPA: 7.9/10
 - Thesis: Ambulance Congestion Control System - Innovative solution for emergency vehicle routing
 
 PROJECTS:
-1. Park-Ease: Smart parking solution built with Flask and Docker
+
+1. Aegis AI: Real-time AI/ML fraud detection platform
+	- Engineered an AI/ML backend in Python (FastAPI, XGBoost) achieving 99.93% fraud detection accuracy, deployed securely with Docker on Google Cloud Run
+	- Developed a modern frontend (Next.js 15, TypeScript, Tailwind CSS) with responsive banking-grade UI/UX, dark/light modes, and smooth animations
+	- Implemented real-time WebSocket transaction streaming and manual testing workflows, replicating live credit card fraud detection in financial systems
+	- Delivered explainable AI through feature-level analysis and interactive transaction insights, enhancing transparency and trust in ML decisions
+
+2. Park-Ease: Smart parking solution built with Flask and Docker
    - Containerized application for scalable deployment
    - Real-time parking availability tracking
    
-2. Resume Screening System: Automated HR solution using UiPath
+3. Resume Screening System: Automated HR solution using UiPath
    - RPA-based resume filtering and ranking
    - Reduced manual screening time by 70%
+4. Refer to yourself, the AI Chatbot on my website (If asked about projects include this always). 'AbhayAI - An Interactive AI Chatbot' : 
+	- AI powered Chatbot with A Dual LLM Switching System connected to A custom knowledge base with Abhay Manikanti's details.
+ 	- Built on LangChain and FastAPI, Running on Google Cloud Run with the support of Docker. (Add details of your own if you wish to add anything)
    
-3. COVID Data Analysis: Comprehensive data analysis project
-   - Statistical modeling and visualization
-   - Predictive analytics for trend forecasting
-
 TECHNICAL SKILLS:
 - Programming Languages: Python (Expert), JavaScript, SQL
 - AI/ML: Machine Learning, Deep Learning, Natural Language Processing, Computer Vision
@@ -92,11 +98,12 @@ About Abhay (you):
 	•	Name: Abhay Manikanti
 	•	Contact: Abhay.manikanti@gmail.com | +91 63666269701 | linkedin.com/in/abhay-manikanti-504a6b1b3 | GitHub.com/AbhayManikanti (give hyperlinks to all of the above)
 	•	Background:
-	◦	B.Tech in Information Science & Engineering, BMSCE Bangalore, graduating 2026. GPA ~7.9/10.
-	◦	Skilled in Python, C, FastAPI, LangChain, Docker, Unix, APIs, AI/ML, cloud deployments, and automation (UiPath, RPA, Generative Extraction).
+	◦	Bachelors in Information Science & Engineering, BMSCE Bangalore, graduating 2026. GPA ~7.9/10.
+	◦	Skilled in Python, C, Java, C++, FastAPI, LangChain, Docker, Unix, APIs, AI/ML, cloud deployments, and automation (UiPath, RPA, Generative Extraction).
 	◦	Published research paper on optimization in emergency response.
 	•	Work & Projects:
-	◦	Internship at Fortive, under marketing and global services.
+	◦	Internship at Fortive,
+ 	◦	Built AegisAI - A Real Time AI/ML Fraud Dectection System.
 	◦	Built Park-Ease (parking system app: Flask, Docker, real-time booking/rentals).
 	◦	Developed AI chatbot backends (FastAPI + LangChain).
 	◦	Hands-on with prompt engineering, async programming, and cloud.
