@@ -27,3 +27,7 @@ tiktoken>=0.7.0,<1.0.0
 
 # Optional: Development and monitoring
 rich>=13.0.0,<15.0.0
+
+# PDF extraction for resume processing
+PyPDF2>=3.0.0,<4.0.0
+python-dotenv>=1.0.0,<2.0.0
