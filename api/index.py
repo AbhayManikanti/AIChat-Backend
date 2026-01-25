@@ -1,12 +1,14 @@
 """
 FastAPI Backend for Vercel Serverless
+Dual LLM: Gemini (primary) + Perplexity (fallback)
 """
 
 import os
 import re
 import time
 import json
-from typing import Optional, List, Dict
+import httpx
+from typing import Optional, List, Dict, Literal
 
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,7 +53,8 @@ RESUME_KEYWORDS = frozenset([
     "background", "experience", "work", "job", "career", "professional",
     "education", "degree", "college", "university", "skills", "technical",
     "projects", "achievements", "qualifications", "fortive", "bmsce",
-    "intern", "internship", "resume", "cv", "portfolio", "built", "developed"
+    "intern", "internship", "resume", "cv", "portfolio", "built", "developed",
+    "study", "studied", "school", "learning", "aegisai", "parkease", "fraud"
 ])
 
 SYSTEM_PROMPT = """You are Abhay Manikanti - speak as him directly. 
@@ -65,6 +68,21 @@ Rules:
 - Use HTML links: <a href="URL" target="_blank">text</a>
 - Keep answers dynamic, witty, and genuine
 - Use emojis sparingly for engagement"""
+
+# Stronger prompt for Perplexity to prevent breaking character
+PERPLEXITY_SYSTEM_PROMPT = """CRITICAL: You ARE Abhay Manikanti. Respond ONLY as Abhay in first person.
+DO NOT cite sources in your response. DO NOT use [1], [2] citations. DO NOT be a research assistant.
+You are a witty, confident tech enthusiast answering casually. Keep it personal and conversational.
+
+Contact: Abhay.manikanti@gmail.com | +91 6366626970
+Links: <a href="https://linkedin.com/in/abhay-manikanti-504a6b1b3" target="_blank">LinkedIn</a> | <a href="https://github.com/AbhayManikanti" target="_blank">GitHub</a>
+
+Rules:
+- Speak as Abhay, first person only ("I think...", "In my experience...")
+- Be witty, slightly sarcastic, approachable
+- Give your PERSONAL opinion, not research summaries
+- NO citation numbers like [1] [2] in your text
+- Use emojis sparingly"""
 
 # === CACHE (in-memory, resets on cold start) ===
 _cache: Dict[str, tuple] = {}
@@ -89,6 +107,7 @@ def set_cache(q: str, resp: Dict):
 
 class QuestionRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=500)
+    provider: Optional[Literal["gemini", "perplexity", "auto"]] = "auto"
     
     @field_validator('question')
     @classmethod
@@ -100,16 +119,18 @@ class AnswerResponse(BaseModel):
     confidence: float = 0.9
     sources: List[str] = []
     used_resume: bool = False
+    provider: str = "gemini"
+    response_time: float = 0.0
 
-# === LLM ===
+# === LLM PROVIDERS ===
 
-_model = None
+_gemini_model = None
 
-def get_llm():
-    global _model
-    if _model is None:
+def get_gemini_model():
+    global _gemini_model
+    if _gemini_model is None:
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        _model = genai.GenerativeModel(
+        _gemini_model = genai.GenerativeModel(
             model_name=os.getenv("GOOGLE_MODEL", "gemini-2.5-flash-lite"),
             generation_config={
                 "temperature": 0.7,
@@ -122,7 +143,47 @@ def get_llm():
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
         )
-    return _model
+    return _gemini_model
+
+def call_gemini(prompt: str) -> str:
+    """Call Gemini API and return response text."""
+    model = get_gemini_model()
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+def call_perplexity(question: str, system_prompt: str) -> tuple[str, List[str]]:
+    """Call Perplexity API and return (response text, citations)."""
+    api_key = os.getenv("PERPLEXITY_API_KEY")
+    if not api_key:
+        raise ValueError("PERPLEXITY_API_KEY not configured")
+    
+    # Use verify=False only for local testing (detects Vercel environment)
+    is_vercel = os.getenv("VERCEL") is not None
+    verify_ssl = True if is_vercel else False  # Disable SSL verify locally due to macOS cert issues
+    
+    with httpx.Client(timeout=25.0, verify=verify_ssl) as client:
+        response = client.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": os.getenv("PERPLEXITY_MODEL", "sonar"),
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question}
+                ],
+                "max_tokens": 500,
+                "temperature": 0.7
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        answer = data["choices"][0]["message"]["content"].strip()
+        citations = data.get("citations", [])
+        return answer, citations
 
 def is_resume_question(q: str) -> bool:
     return any(kw in q.lower() for kw in RESUME_KEYWORDS)
@@ -159,11 +220,16 @@ async def ping():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "llm_configured": os.getenv("GOOGLE_API_KEY") is not None}
+    return {
+        "status": "healthy", 
+        "gemini_configured": os.getenv("GOOGLE_API_KEY") is not None,
+        "perplexity_configured": os.getenv("PERPLEXITY_API_KEY") is not None
+    }
 
 @app.post("/ask", response_model=AnswerResponse)
 async def ask(request: QuestionRequest):
     question = request.question
+    provider_choice = request.provider or "auto"
     
     # Check cache
     cached = get_cached(question)
@@ -171,27 +237,64 @@ async def ask(request: QuestionRequest):
         return AnswerResponse(**cached)
     
     uses_resume = is_resume_question(question)
+    system_prompt = SYSTEM_PROMPT
+    if uses_resume:
+        system_prompt += f"\n\nYour Background:\n{RESUME_CONTENT}"
     
-    try:
-        prompt = build_prompt(question)
-        model = get_llm()
-        response = model.generate_content(prompt)
-        answer = convert_links(response.text.strip())
-        
-        result = {
-            "answer": answer,
-            "confidence": 0.95 if uses_resume else 0.9,
-            "sources": [],
-            "used_resume": uses_resume
-        }
-        
-        set_cache(question, result)
-        return AnswerResponse(**result)
-        
-    except Exception as e:
-        error_msg = str(e)
-        # Return actual error for debugging
-        raise HTTPException(status_code=500, detail=f"LLM Error: {error_msg[:200]}")
+    start_time = time.time()
+    answer = None
+    sources = []
+    provider_used = "gemini"
+    errors = []
+    
+    # Determine provider order
+    if provider_choice == "gemini":
+        providers = ["gemini"]
+    elif provider_choice == "perplexity":
+        providers = ["perplexity"]
+    else:  # auto - try gemini first, fallback to perplexity
+        providers = ["gemini", "perplexity"]
+    
+    for provider in providers:
+        try:
+            if provider == "gemini":
+                prompt = build_prompt(question)
+                answer = call_gemini(prompt)
+                provider_used = "gemini"
+                break
+            elif provider == "perplexity":
+                # Use stronger prompt for Perplexity to maintain character
+                pplx_prompt = PERPLEXITY_SYSTEM_PROMPT
+                if uses_resume:
+                    pplx_prompt += f"\n\nYour Background:\n{RESUME_CONTENT}"
+                answer, sources = call_perplexity(question, pplx_prompt)
+                provider_used = "perplexity"
+                break
+        except Exception as e:
+            errors.append(f"{provider}: {str(e)[:100]}")
+            continue
+    
+    elapsed = time.time() - start_time
+    
+    if answer is None:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"All providers failed: {'; '.join(errors)}"
+        )
+    
+    answer = convert_links(answer)
+    
+    result = {
+        "answer": answer,
+        "confidence": 0.95 if uses_resume else 0.9,
+        "sources": sources[:5],  # Limit to 5 sources
+        "used_resume": uses_resume,
+        "provider": provider_used,
+        "response_time": round(elapsed, 3)
+    }
+    
+    set_cache(question, result)
+    return AnswerResponse(**result)
 
 @app.post("/reset")
 async def reset():
@@ -200,4 +303,11 @@ async def reset():
 
 @app.get("/info")
 async def info():
-    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("GOOGLE_MODEL", "gemini-2.5-flash-lite")}
+    return {
+        "version": "3.3.0", 
+        "platform": "vercel", 
+        "providers": {
+            "gemini": os.getenv("GOOGLE_MODEL", "gemini-2.5-flash-lite"),
+            "perplexity": os.getenv("PERPLEXITY_MODEL", "sonar")
+        }
+    }
