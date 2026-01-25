@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # === CONSTANTS ===
 
@@ -103,20 +103,26 @@ class AnswerResponse(BaseModel):
 
 # === LLM ===
 
-_llm = None
+_model = None
 
 def get_llm():
-    global _llm
-    if _llm is None:
-        _llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
-            api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0.7,
-            max_tokens=500,
-            timeout=25,  # Vercel has 30s limit
-            max_retries=1,
+    global _model
+    if _model is None:
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        _model = genai.GenerativeModel(
+            model_name=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
+            generation_config={
+                "temperature": 0.7,
+                "max_output_tokens": 500,
+            },
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
         )
-    return _llm
+    return _model
 
 def is_resume_question(q: str) -> bool:
     return any(kw in q.lower() for kw in RESUME_KEYWORDS)
@@ -124,11 +130,12 @@ def is_resume_question(q: str) -> bool:
 def convert_links(text: str) -> str:
     return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', text)
 
-def build_messages(question: str) -> list:
+def build_prompt(question: str) -> str:
+    """Build a single prompt for the Gemini API."""
     system = SYSTEM_PROMPT
     if is_resume_question(question):
         system += f"\n\nYour Background:\n{RESUME_CONTENT}"
-    return [SystemMessage(content=system), HumanMessage(content=question)]
+    return f"{system}\n\nUser: {question}\n\nAbhay:"
 
 # === FASTAPI APP ===
 
@@ -152,7 +159,7 @@ async def ping():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "llm_configured": os.getenv("OPENAI_API_KEY") is not None}
+    return {"status": "healthy", "llm_configured": os.getenv("GOOGLE_API_KEY") is not None}
 
 @app.post("/ask", response_model=AnswerResponse)
 async def ask(request: QuestionRequest):
@@ -166,10 +173,10 @@ async def ask(request: QuestionRequest):
     uses_resume = is_resume_question(question)
     
     try:
-        messages = build_messages(question)
-        llm = get_llm()
-        response = llm.invoke(messages)
-        answer = convert_links(response.content.strip())
+        prompt = build_prompt(question)
+        model = get_llm()
+        response = model.generate_content(prompt)
+        answer = convert_links(response.text.strip())
         
         result = {
             "answer": answer,
@@ -193,4 +200,4 @@ async def reset():
 
 @app.get("/info")
 async def info():
-    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")}
+    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("GOOGLE_MODEL", "gemini-2.0-flash")}

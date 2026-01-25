@@ -1,28 +1,28 @@
 """
 FastAPI Resume Chatbot Backend - OPTIMIZED FOR <3s RESPONSES
 Author: Abhay Sreenath Manikanti
-Version: 3.1.0
+Version: 3.0.0
 
-OPTIMIZATIONS:
-1. Direct LLM call (no agents/chains)
-2. Pre-warmed LLM on startup
-3. Common questions pre-cached
-4. Response time tracking
-5. Cloud Run optimized (min instances, warmup)
-6. Gemini 2.0 Flash Lite (fastest model)
+WHAT WAS FIXED:
+1. Removed LangChain Agent (was doing 15 iterations, 25s timeout)
+2. Removed tool/chain overhead (direct API call instead)
+3. Removed blocking run_in_executor pattern
+4. Removed complex retry logic
+5. Simplified caching (no MD5 hashing)
+6. Reduced prompt size significantly
+7. Using gemini-2.0-flash-lite (fastest model)
+8. Single synchronous API call with 10s hard timeout
 """
 
 import os
 import re
 import time
 import json
-import logging
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, status, Request
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 
@@ -31,19 +31,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 # Load environment variables
 load_dotenv("keys.env")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(message)s', datefmt='%H:%M:%S')
-log = logging.getLogger("abhay-ai")
-
-# === METRICS ===
-_metrics = {
-    "total_requests": 0,
-    "cache_hits": 0,
-    "avg_response_ms": 0,
-    "fastest_ms": float('inf'),
-    "slowest_ms": 0,
-}
 
 # === CONSTANTS ===
 
@@ -100,19 +87,8 @@ CURRENT_TRAINING_PROMPT = DEFAULT_TRAINING_PROMPT
 
 # === SIMPLE CACHE ===
 _cache: Dict[str, tuple] = {}  # {question: (response, timestamp)}
-CACHE_TTL = 7200  # 2 hours (longer for better hit rate)
-CACHE_MAX = 500   # More cache entries
-
-# Common questions to pre-cache on startup
-COMMON_QUESTIONS = [
-    "who are you",
-    "what are your skills",
-    "tell me about yourself",
-    "what projects have you worked on",
-    "what is your experience",
-    "hi",
-    "hello",
-]
+CACHE_TTL = 3600  # 1 hour
+CACHE_MAX = 200
 
 def get_cached(q: str) -> Optional[Dict]:
     """Get cached response"""
@@ -228,73 +204,21 @@ def load_training_prompt() -> str:
 
 # === FASTAPI APP ===
 
-async def pre_cache_common_questions():
-    """Pre-cache common questions for instant responses"""
-    log.info("🔥 Pre-caching common questions...")
-    llm = get_llm()
-    
-    import asyncio
-    for q in COMMON_QUESTIONS:
-        try:
-            if get_cached(q):
-                continue  # Already cached
-            
-            messages = build_messages(q)
-            response = llm.invoke(messages)
-            answer = convert_links(response.content.strip())
-            
-            result = {
-                "answer": answer,
-                "confidence": 0.95,
-                "sources": [],
-                "used_resume": is_resume_question(q)
-            }
-            set_cache(q, result)
-            log.info(f"  ✓ Cached: '{q[:30]}...'")
-            
-            # Small delay to avoid rate limits during pre-cache
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            log.warning(f"  ✗ Failed to cache '{q}': {str(e)[:50]}")
-    
-    log.info(f"🚀 Pre-cached {len(_cache)} responses")
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: pre-warm LLM only (no pre-caching to avoid quota issues)"""
+    """Minimal startup - just pre-warm LLM"""
     global CURRENT_TRAINING_PROMPT
-    
-    log.info("=" * 50)
-    log.info("🚀 Starting Abhay AI Backend v3.1.0")
-    log.info("=" * 50)
-    
-    # Load training prompt
     CURRENT_TRAINING_PROMPT = load_training_prompt()
-    log.info("✓ Training prompt loaded")
-    
-    # Pre-warm LLM (just initialize, don't make API calls)
-    get_llm()
-    log.info("✓ LLM initialized")
-    
-    # Skip pre-caching on startup to avoid quota issues
-    # Use /warmup endpoint manually after deploy if needed
-    
-    log.info("=" * 50)
-    log.info("✅ Ready for requests!")
-    log.info("=" * 50)
-    
+    get_llm()  # Pre-warm
     yield
-    
-    log.info("Shutting down...")
 
 app = FastAPI(
     title="Abhay's AI Agent - Optimized",
-    description="Near-instant responses with Gemini Flash",
-    version="3.1.0",
+    description="<3 second response times with Gemini Flash",
+    version="3.0.0",
     lifespan=lifespan
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -302,15 +226,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Response time middleware
-@app.middleware("http")
-async def add_response_time(request: Request, call_next):
-    start = time.time()
-    response = await call_next(request)
-    duration_ms = (time.time() - start) * 1000
-    response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
-    return response
 
 # === ENDPOINTS ===
 
@@ -344,20 +259,13 @@ async def health_detailed():
 async def ask_question(request: QuestionRequest):
     """
     Ultra-fast question answering - single direct API call.
-    Target: Near-instant for cached, <2s for new questions.
+    Target: <3 seconds response time.
     """
-    start_time = time.time()
     question = request.question
-    
-    # Update metrics
-    _metrics["total_requests"] += 1
     
     # 1. Check cache first (instant return)
     cached = get_cached(question)
     if cached:
-        duration_ms = (time.time() - start_time) * 1000
-        _metrics["cache_hits"] += 1
-        log.info(f"⚡ CACHE HIT | {duration_ms:.0f}ms | '{question[:40]}...'")
         return AnswerResponse(**cached)
     
     # 2. Determine if resume context needed
@@ -384,20 +292,10 @@ async def ask_question(request: QuestionRequest):
         
         # 7. Cache and return
         set_cache(question, result)
-        
-        # Update metrics
-        duration_ms = (time.time() - start_time) * 1000
-        _metrics["fastest_ms"] = min(_metrics["fastest_ms"], duration_ms)
-        _metrics["slowest_ms"] = max(_metrics["slowest_ms"], duration_ms)
-        total = _metrics["total_requests"]
-        _metrics["avg_response_ms"] = ((_metrics["avg_response_ms"] * (total - 1)) + duration_ms) / total
-        
-        log.info(f"✅ NEW | {duration_ms:.0f}ms | Resume: {uses_resume} | '{question[:40]}...'")
         return AnswerResponse(**result)
         
     except Exception as e:
         error_msg = str(e)
-        log.error(f"❌ ERROR | '{question[:40]}...' | {error_msg[:50]}")
         if "429" in error_msg or "rate" in error_msg.lower():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -490,8 +388,7 @@ async def get_cache_stats():
     return {
         "cached_responses": len(_cache),
         "cache_max": CACHE_MAX,
-        "cache_ttl_seconds": CACHE_TTL,
-        "pre_cached_questions": len(COMMON_QUESTIONS)
+        "cache_ttl_seconds": CACHE_TTL
     }
 
 @app.post("/clear-cache")
@@ -500,20 +397,6 @@ async def clear_cache():
     _cache.clear()
     return {"status": "success", "cleared": count}
 
-@app.get("/metrics")
-async def get_metrics():
-    """Get performance metrics"""
-    cache_hit_rate = (_metrics["cache_hits"] / _metrics["total_requests"] * 100) if _metrics["total_requests"] > 0 else 0
-    return {
-        "total_requests": _metrics["total_requests"],
-        "cache_hits": _metrics["cache_hits"],
-        "cache_hit_rate": f"{cache_hit_rate:.1f}%",
-        "avg_response_ms": f"{_metrics['avg_response_ms']:.0f}ms",
-        "fastest_ms": f"{_metrics['fastest_ms']:.0f}ms" if _metrics['fastest_ms'] != float('inf') else "N/A",
-        "slowest_ms": f"{_metrics['slowest_ms']:.0f}ms" if _metrics['slowest_ms'] > 0 else "N/A",
-        "cached_responses": len(_cache)
-    }
-
 @app.get("/optimization-stats")
 async def get_optimization_stats():
     return {
@@ -521,7 +404,7 @@ async def get_optimization_stats():
         "model": os.getenv("GOOGLE_MODEL", "gemini-2.0-flash-lite"),
         "timeout": "10 seconds",
         "caching": {"entries": len(_cache), "max": CACHE_MAX, "ttl": CACHE_TTL},
-        "target_response_time": "Near-instant (cached) / <2s (new)"
+        "target_response_time": "<3 seconds"
     }
 
 @app.get("/llm-status")
@@ -537,24 +420,13 @@ async def get_llm_status():
 
 @app.get("/readiness")
 async def readiness():
-    if os.getenv("GOOGLE_API_KEY") and _llm is not None:
-        return {"status": "ready", "cached": len(_cache)}
-    return JSONResponse(status_code=503, content={"status": "not_ready"})
+    if os.getenv("GOOGLE_API_KEY"):
+        return {"status": "ready"}
+    return {"status": "not_ready"}, 503
 
 @app.get("/startup")
 async def startup():
     return {"status": "started", "timestamp": time.time()}
-
-@app.post("/warmup")
-async def warmup():
-    """Cloud Run warmup endpoint - call this after deploy to pre-warm"""
-    if len(_cache) == 0:
-        await pre_cache_common_questions()
-    return {
-        "status": "warmed",
-        "cached_responses": len(_cache),
-        "llm_ready": _llm is not None
-    }
 
 @app.get("/token-optimization-status")
 async def token_optimization_status():
