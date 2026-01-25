@@ -2,5 +2,5 @@ fastapi>=0.110.0
 uvicorn>=0.27.0
 python-dotenv>=1.0.0
 pydantic>=2.5.0
-langchain-google-genai>=2.0.0
+langchain-openai>=0.3.0
 langchain-core>=0.3.0

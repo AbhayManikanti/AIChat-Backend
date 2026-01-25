@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 # === CONSTANTS ===
@@ -108,9 +108,9 @@ _llm = None
 def get_llm():
     global _llm
     if _llm is None:
-        _llm = ChatGoogleGenerativeAI(
-            model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
+        _llm = ChatOpenAI(
+            model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
+            api_key=os.getenv("OPENAI_API_KEY"),
             temperature=0.7,
             max_tokens=500,
             timeout=25,  # Vercel has 30s limit
@@ -152,7 +152,7 @@ async def ping():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "llm_configured": os.getenv("GOOGLE_API_KEY") is not None}
+    return {"status": "healthy", "llm_configured": os.getenv("OPENAI_API_KEY") is not None}
 
 @app.post("/ask", response_model=AnswerResponse)
 async def ask(request: QuestionRequest):
@@ -193,4 +193,4 @@ async def reset():
 
 @app.get("/info")
 async def info():
-    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("GOOGLE_MODEL", "gemini-2.0-flash")}
+    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")}
