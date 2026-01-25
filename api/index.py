@@ -183,9 +183,8 @@ async def ask(request: QuestionRequest):
         
     except Exception as e:
         error_msg = str(e)
-        if "429" in error_msg or "rate" in error_msg.lower() or "quota" in error_msg.lower():
-            raise HTTPException(status_code=503, detail="Rate limited. Please try again.")
-        raise HTTPException(status_code=500, detail=f"Error: {error_msg}")
+        # Return actual error for debugging
+        raise HTTPException(status_code=500, detail=f"LLM Error: {error_msg[:200]}")
 
 @app.post("/reset")
 async def reset():
