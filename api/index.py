@@ -110,7 +110,7 @@ def get_llm():
     if _model is None:
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
         _model = genai.GenerativeModel(
-            model_name=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
+            model_name=os.getenv("GOOGLE_MODEL", "gemini-2.5-flash-lite"),
             generation_config={
                 "temperature": 0.7,
                 "max_output_tokens": 500,
@@ -200,4 +200,4 @@ async def reset():
 
 @app.get("/info")
 async def info():
-    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("GOOGLE_MODEL", "gemini-2.0-flash")}
+    return {"version": "3.2.0", "platform": "vercel", "model": os.getenv("GOOGLE_MODEL", "gemini-2.5-flash-lite")}
